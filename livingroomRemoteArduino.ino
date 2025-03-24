@@ -11,91 +11,23 @@ RTC_DATA_ATTR bool buttonFlagMap[3][2] = {false}; // Button flag map
 RTC_DATA_ATTR float lastPotReading = 0;           // Last potentiometer reading
 RTC_DATA_ATTR float lastVoltage = 0;              // Last voltage reading
 RTC_DATA_ATTR float lastBatteryPercentage = 0;    // Last battery percentage reading
-int buttonIndex = -1;                             // Button index
 
-bool button_update_available = false;        // Button update available
-bool potentiometer_update_available = false; // Potentiometer update available
-bool battery_update_available = false;       // Battery update available
+int buttonIndex = -1; // Button index
 
-void handle_wake_up()
-{
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  switch (wakeup_reason)
-  {
-  case ESP_SLEEP_WAKEUP_EXT1:
-    DEBUG_PRINT(DEBUG_WAKEUP, "Wake-up was caused by external signal using RTC_IO");
+// Flags to check if there are any updates to publish
+bool button_update_available = false;
+bool potentiometer_update_available = false;
+bool battery_update_available = false;
 
-    button_update_available = check_buttons(buttonFlagMap, &buttonIndex); // Check if any buttons were pressed
+/* -------------------------------------------------------------------------- */
+/* ---------------------------- Forward Declarations ------------------------ */
 
-    potentiometer_update_available = check_potentiometer(&lastPotReading); // Check if the potentiometer has changed
+void handle_wake_up();
+void handle_idle();
+bool handle_data_updates();
 
-    battery_update_available = check_battery(&lastVoltage, &lastBatteryPercentage); // Cause a battery status update
-
-    break;
-  case ESP_SLEEP_WAKEUP_TIMER:
-    DEBUG_PRINT(DEBUG_WAKEUP, "Wake-up was caused by battery measurement timer");
-
-    battery_update_available = check_battery(&lastVoltage, &lastBatteryPercentage); // Cause a battery status update
-
-    break;
-  case ESP_SLEEP_WAKEUP_EXT0:
-  case ESP_SLEEP_WAKEUP_TOUCHPAD:
-  case ESP_SLEEP_WAKEUP_ULP:
-  default:
-    DEBUG_PRINT(DEBUG_WAKEUP, "Wake-up was not caused by deep sleep: %d\n", wakeup_reason);
-
-    battery_update_available = check_battery(&lastVoltage, &lastBatteryPercentage); // Cause a battery status update
-    break;
-  }
-}
-
-// Checks if there are any updates to publish and publishes them
-void handle_data_updates()
-{
-  if (button_update_available)
-  {
-    publish_buttons_status(buttonIndex); // Publish the button status
-    indicate_button_press();             // Indicate the button press via the LED
-    button_update_available = false;     // Reset the flag
-  }
-  if (potentiometer_update_available)
-  {
-    publish_potentiometer_status(get_potentiometer_percentage(lastPotReading)); // Publish the potentiometer status
-    indicate_dimmer_change();                                                   // Indicate the dimmer change via the LED
-    potentiometer_update_available = false;                                     // Reset the flag
-  }
-  if (battery_update_available)
-  {
-    publish_battery_status(lastVoltage, lastBatteryPercentage); // Publish the battery status
-    battery_update_available = false;                           // Reset the flag
-  }
-}
-
-void handle_idle()
-{
-  unsigned long lastActivityTime = millis();
-  while (millis() - lastActivityTime < SLEEP_AFTER_IDLE_MINUTES * 60 * 1000) // Spin a loop for the idle timeout
-  {
-    // Check if any buttons were pressed
-    if (check_buttons(buttonFlagMap, &buttonIndex))
-    {
-      lastActivityTime = millis();
-      publish_buttons_status(buttonIndex);
-      indicate_button_press();
-    }
-
-    // Check if the potentiometer has changed
-    if (check_potentiometer(&lastPotReading))
-    {
-      lastActivityTime = millis();
-      publish_potentiometer_status(get_potentiometer_percentage(lastPotReading)); // Publish the potentiometer status
-      indicate_dimmer_change();                                                   // Indicate the dimmer change via the LED
-    }
-
-    DEBUG_PRINT(DEBUG_WAKEUP, "Spinning...");
-    delay(15); // Small delay to avoid unnecessary calls.
-  }
-}
+/* -------------------------------------------------------------------------- */
+/* ---------------------------- Main Functions ------------------------------ */
 
 void setup()
 {
@@ -103,35 +35,139 @@ void setup()
   Serial.begin(115200);
 #endif
 
+  handle_wake_up(); // Handle the wakeup (timing is important here)
+
   DEBUG_PRINT(DEBUG_WAKEUP, "Setting up...");
 
-  // The setup for functions references in the wakeup handler need to be initialized before it.
-  setup_buttons();
-  setup_potentiometer();
-  setup_battery();
-
-  handle_wake_up();
+  /**
+   * At first boot we need to initialize the buttons.
+   * They are not initialized in the wake_up handler to save time, as they persist in deep sleep.
+   * */
+  esp_reset_reason_t reset_reason = esp_reset_reason();
+  if (true) // E.g. first boot
+  {
+    setup_buttons();
+    setup_potentiometer();
+    setup_battery();
+  }
+#if DEBUG_LEVEL != DEBUG_NONE
+  DEBUG_PRINT(DEBUG_WAKEUP, "Reset reason: %d", reset_reason);
+#endif
 
   // Initialize the networking and LED. They take a long time to initialize, so we do it after we handle the wakeup.
   setup_networking();
   setup_led();
 
-  // Handle any updates to publish and handle idle time
+  // Since we are fully setup now, handle any updates to publish and handle idle time
   handle_data_updates();
+
   handle_idle();
 
-  // Turn off the LED and set the wakeup sources
+  // We need to actively turn off the LED to eliminate current leakage.
   turn_off_led();
+  // Set the wakeup sources
+  esp_sleep_enable_ext1_wakeup(WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_LOW);               // Wake up on button press & potentiometer change
+  esp_sleep_enable_timer_wakeup(BATTERY_CHECK_INTERVAL_MINUTES * 60 * uS_TO_S_FACTOR); // Wake up on battery check interval
 
-  esp_sleep_enable_ext1_wakeup(WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_LOW);
-  esp_sleep_enable_timer_wakeup(BATTERY_CHECK_INTERVAL_S * uS_TO_S_FACTOR);
+  DEBUG_PRINT(DEBUG_WAKEUP, "Going to sleep!"); // Print a message before going to sleep
 
-  DEBUG_PRINT(DEBUG_WAKEUP, "Going to sleep");
-
-  esp_deep_sleep_start();
+  esp_deep_sleep_start(); // Go to sleep
 }
 
 void loop()
 {
-  // Loop does nothing, we're using the wakeup handler to handle the logic
+  // The loop function doesn't run.
+}
+
+/* -------------------------------------------------------------------------- */
+/* ---------------------------- Handler Functions --------------------------- */
+
+void handle_wake_up()
+{
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+
+  switch (wakeup_reason)
+  {
+  case ESP_SLEEP_WAKEUP_EXT1:
+
+    // First we check the buttons (time critical)
+    setup_buttons();
+    button_update_available = check_buttons(buttonFlagMap, &buttonIndex);
+
+    // Then we check the potentiometer (not time critical)
+    setup_potentiometer();
+    potentiometer_update_available = check_potentiometer(&lastPotReading);
+
+    // Then we log the wakeup reason
+    DEBUG_PRINT(DEBUG_WAKEUP, "Wake-up was caused by external signal using RTC_IO");
+    break;
+  case ESP_SLEEP_WAKEUP_TOUCHPAD:
+    DEBUG_PRINT(DEBUG_WAKEUP, "Wake-up was caused by touchpad");
+    break;
+  case ESP_SLEEP_WAKEUP_ULP:
+    DEBUG_PRINT(DEBUG_WAKEUP, "Wake-up was caused by ULP");
+    break;
+  case ESP_SLEEP_WAKEUP_TIMER:
+    DEBUG_PRINT(DEBUG_WAKEUP, "Wake-up was caused by timer");
+    setup_battery();
+    battery_update_available = check_battery(&lastVoltage, &lastBatteryPercentage); // Cause a battery status update
+    break;
+  default:
+    DEBUG_PRINT(DEBUG_WAKEUP, "Wake-up was not caused by deep sleep: %d\n", wakeup_reason);
+    setup_battery();
+    battery_update_available = check_battery(&lastVoltage, &lastBatteryPercentage); // Cause a battery status update
+    break;
+  }
+}
+
+void handle_idle()
+{
+  DEBUG_PRINT(DEBUG_WAKEUP, "Entered idle loop...");
+  unsigned long lastActivityTime = millis();
+  while (millis() - lastActivityTime < SLEEP_AFTER_IDLE_MINUTES * 60 * 1000) // Spin a loop for the idle timeout
+  {
+    handle_data_updates();
+
+    if (check_buttons(buttonFlagMap, &buttonIndex))
+    {
+      button_update_available = true;
+      lastActivityTime = millis();
+    }
+
+    if (check_potentiometer(&lastPotReading))
+    {
+      potentiometer_update_available = true;
+      lastActivityTime = millis();
+    }
+
+    DEBUG_PRINT(DEBUG_WAKEUP, "...");
+    delay(50); // Small delay to avoid unnecessary calls.
+  }
+}
+
+// Checks if there are any updates to publish and publishes them
+bool handle_data_updates()
+{
+  if (button_update_available)
+  {
+    indicate_button_press();             // Indicate the button press via the LED
+    publish_buttons_status(buttonIndex); // Publish the button status
+    button_update_available = false;     // Reset the flag
+    return true;
+  }
+  if (potentiometer_update_available)
+  {
+    indicate_dimmer_change();                                                   // Indicate the dimmer change via the LED
+    publish_potentiometer_status(get_potentiometer_percentage(lastPotReading)); // Publish the potentiometer status
+    potentiometer_update_available = false;                                     // Reset the flag
+    return true;
+  }
+  if (battery_update_available)
+  {
+    indicate_battery_low();                                     // Indicate the battery low via the LED
+    publish_battery_status(lastVoltage, lastBatteryPercentage); // Publish the battery status
+    battery_update_available = false;                           // Reset the flag
+    return false;
+  }
+  return false;
 }

@@ -22,6 +22,7 @@ bool setup_buttons()
     pinMode(COL_2, INPUT);
 
     DEBUG_PRINT(DEBUG_BUTTONS, "Buttons initialized");
+    return true;
 }
 
 // Scan the matrix and set the button flags (doesn't support multiple presses at once)

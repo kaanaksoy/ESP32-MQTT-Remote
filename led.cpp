@@ -29,13 +29,7 @@ void indicate_battery_low()
     indicate_with_fade(BATTERY_LOW_COLOR);
 }
 
-// Indicate a battery charge
-void indicate_battery_charge()
-{
-    indicate_with_fade(BATTERY_CHARGE_COLOR);
-}
-
-// Indicates via led using a fade effect
+// Indicates via led using a fade effect (blocking function, may be improved for next iteration.)
 void indicate_with_fade(Color color)
 {
     unsigned long startTime = millis();

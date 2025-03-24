@@ -16,15 +16,18 @@
 #define DEFINES_H
 
 // Configuration
-#define SLEEP_AFTER_IDLE_MINUTES 1 // Sleep after idle in minutes
-#define OPERATING_VOLTAGE 3.3      // If you are using a different supply voltage, change this. (it is used to calculate the potentiometer percentage)
+#define SLEEP_AFTER_IDLE_MINUTES 1        // Sleep after idle in minutes
+#define BATTERY_CHECK_INTERVAL_MINUTES 10 // Time in minutes between battery checks
+
+#define OPERATING_VOLTAGE 3.3 // If you are using a different supply voltage, change this. (it is used to calculate the potentiometer percentage)
 
 // Button Matrix
 #define ROW_1 GPIO_NUM_5 // Must be RTC GPIO
 #define ROW_2 GPIO_NUM_7 // Must be RTC GPIO
 #define ROW_3 GPIO_NUM_6 // Must be RTC GPIO
-#define COL_1 22         // Regular GPIO
-#define COL_2 23         // Regular GPIO
+
+#define COL_1 22 // Regular GPIO
+#define COL_2 23 // Regular GPIO
 
 // ADS1015
 #define ADS1015_ADDRESS 0x48           // I2C address of the ADS1015 @see https://cdn-shop.adafruit.com/datasheets/ads1015.pdf
@@ -46,7 +49,6 @@
 
 // Battery Monitoring
 #define BATT_ADC_PIN 0                   // ADC pin for the battery monitoring (For the Beetle ESP32-C6 V1.0 it's GPIO 0)
-#define BATTERY_CHECK_INTERVAL_S 60      // Time in seconds between battery checks
 #define VOLTAGE_CALIBRATION_FACTOR 0.984 // Calibration factor for the battery voltage (differentiates between microcontrollers)
 #define uS_TO_S_FACTOR 1000000ULL        /* Conversion factor for micro seconds to seconds */
 

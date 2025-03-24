@@ -15,7 +15,7 @@ bool setup_potentiometer()
     ADS.setVoltageRange_mV(ADS1015_RANGE_4096);  // using 0-4.096V range since Vref is 3.3v
     ADS.setCompareChannels(ADS1015_COMP_0_GND);  // compare ADC0 to GND
     ADS.setAlertPinMode(ADS1015_ASSERT_AFTER_1); // alert after 1 conversion outside of window
-    ADS.setConvRate(ADS1015_1600_SPS);           // 1600 samples per second (can be reduced to reduce power consumption)
+    ADS.setConvRate(ADS1015_128_SPS);            // 128 samples per second (can be increased)
     ADS.setMeasureMode(ADS1015_CONTINUOUS);      // continuous mode
     ADS.setAlertLatch(ADS1015_LATCH_DISABLED);   // disable latching of alert pin (i.e. self resets after 8uS)
 
@@ -37,11 +37,16 @@ bool check_potentiometer(float *lastReading)
 bool read_potentiometer(float *reading)
 {
     float lastReading = *reading;
-    *reading = ADS.getResult_V();
-    DEBUG_PRINT(DEBUG_POT, "ADC DIFF Value: %.3f\n", *reading);
+    float newReading = ADS.getResult_V();
+    DEBUG_PRINT(DEBUG_POT, "ADC Reading: %.3f", newReading);
 
     // Return true if the reading is above or below the threshold. This is useful when we're spinning an idle loop to minimize mqtt calls.
-    return lastReading > (*reading + ADS1015_ALERT_THRESHOLD_V) || lastReading < (*reading - ADS1015_ALERT_THRESHOLD_V);
+    if (lastReading > (newReading + ADS1015_ALERT_THRESHOLD_V) || lastReading < (newReading - ADS1015_ALERT_THRESHOLD_V))
+    {
+        *reading = newReading;
+        return true;
+    }
+    return false;
 }
 
 void set_new_adc_bounds(float *lastReading)
